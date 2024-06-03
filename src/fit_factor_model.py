@@ -73,5 +73,5 @@ def fit_factor_model(
             rho /= tau
             U *= tau
 
-    d = np.clip(np.diag(Sigma) - np.diag(X), 0, None)
+    d = np.clip(np.diag(Sigma) - np.diag(Z), 0, None)
     return d, Z
