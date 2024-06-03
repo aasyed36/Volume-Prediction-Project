@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 
 @njit
@@ -15,8 +15,32 @@ def project_to_psd_cone(X, rank_k):
     return (eigvecs * eigvals).dot(eigvecs.T)
 
 
+@njit(parallel=True)
+def x_update(Sigma, rho, Z, U, n):
+    X = np.zeros((n, n))
+    for i in prange(n):
+        for j in prange(n):
+            if i != j:
+                X[i, j] = (1 / (1 + rho)) * (Sigma[i, j] + rho * (Z[i, j] - U[i, j]))
+            elif Sigma[i, i] - U[i, i] <= Z[i, i]:
+                X[i, i] = (1 / (1 + rho)) * (Sigma[i, i] + rho * (Z[i, i] - U[i, i]))
+            else:
+                X[i, i] = Z[i, i] - U[i, i]
+    return X
+
+
 @njit
-def factor_model_fitting(Sigma, k, rho, max_iter=1000, tol=1e-6):
+def fit_factor_model(
+    Sigma,
+    k,
+    max_iter=1000,
+    rho=1.0,
+    atol=1e-3,
+    rtol=1e-3,
+    mu=10,
+    tau=2,
+    alpha=1.7,
+):
     """ADMM algorithm for factor model fitting."""
     n = Sigma.shape[0]
 
@@ -26,31 +50,30 @@ def factor_model_fitting(Sigma, k, rho, max_iter=1000, tol=1e-6):
     U = np.zeros((n, n))
 
     for _ in range(max_iter):
-        # X-update
-        X_old = X.copy()
-        X = np.zeros((n, n))
-        for i in range(n):
-            for j in range(n):
-                if i != j:
-                    X[i, j] = (1 / (1 + rho)) * (
-                        Sigma[i, j] + rho * (Z[i, j] - U[i, j])
-                    )
-                elif Sigma[i, i] - U[i, i] <= Z[i, i]:
-                    X[i, i] = (1 / (1 + rho)) * (
-                        Sigma[i, i] + rho * (Z[i, i] - U[i, i])
-                    )
-                else:
-                    X[i, i] = Z[i, i] - U[i, i]
+        Z_old = Z.copy()
 
-        # Z-update
-        Z = project_to_psd_cone(X + U, k)
+        X = x_update(Sigma, rho, Z, U, n)
+        AX = alpha * X + (1 - alpha) * Z_old
+        Z = project_to_psd_cone(AX + U, k)
+        U = U + AX - Z
 
-        # U-update
-        U = U + X - Z
+        # primal and dual residual
+        r = np.linalg.norm(X - Z)
+        s = rho * np.linalg.norm(Z - Z_old)
 
         # Convergence check
-        if np.linalg.norm(X - X_old) < tol:
+        eps_pri = np.sqrt(n) * atol + rtol * max(np.linalg.norm(X), np.linalg.norm(Z))
+        eps_dual = np.sqrt(n) * atol + rtol * rho * np.linalg.norm(U)
+        if r < eps_pri and s < eps_dual:
             break
+
+        # Update penalty parameter
+        if r > mu * s:
+            rho *= tau
+            U /= tau
+        elif s > mu * r:
+            rho /= tau
+            U *= tau
 
     d = np.clip(np.diag(Sigma) - np.diag(X), 0, None)
     return d, Z
