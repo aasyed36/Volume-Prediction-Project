@@ -1,8 +1,58 @@
 import numpy as np
+from numba import njit
 from scipy.stats import multivariate_normal
 from sklearn.cluster import KMeans
 
+from .mvn import *
 from .fit_factor_model import fit_factor_model
+
+
+@njit
+def logsumexp(x):
+    """Compute the logsumexp of an array x."""
+    max_x = np.max(x)
+    sum_exp = np.sum(np.exp(x - max_x))
+    result = max_x + np.log(sum_exp)
+    return result
+
+
+@njit
+def gmm_log_likelihood(X, weights, means, covariances):
+    res = 0.0
+    for i in range(X.shape[0]):
+        log_den = np.empty(len(weights))
+        for k in range(len(weights)):
+            log_den[k] = np.log(weights[k]) + gaussian_log_density(
+                X[i], means[k], covariances[k]
+            )
+        res += logsumexp(log_den)
+    return res
+
+
+@njit
+def e_step(X, weights, means, covariances):
+    log_response = np.zeros((X.shape[0], len(weights)))
+    for i in range(X.shape[0]):
+        log_den = np.empty(len(weights))
+        for k in range(len(weights)):
+            log_den[k] = np.log(weights[k]) + gaussian_log_density(
+                X[i], means[k], covariances[k]
+            )
+        log_response[i] = log_den - logsumexp(log_den)
+
+    return np.exp(log_response)
+
+
+@njit
+def m_step(X, responsibilities, weights, means, covariances):
+    n_samples, n_features = X.shape
+    effective_n = responsibilities.sum(axis=0)
+    weights = effective_n / n_samples
+    means = np.dot(responsibilities.T, X) / effective_n[:, np.newaxis]
+    covariances = np.zeros((len(weights), n_features, n_features))
+    for k in range(len(weights)):
+        diff = X - means[k]
+        covariances[k] = np.dot(responsibilities[:, k] * diff.T, diff) / effective_n[k]
 
 
 class GaussianFactorMixture:
@@ -37,72 +87,37 @@ class GaussianFactorMixture:
         self.covariances_ = np.array([np.cov(X.T) for _ in range(self.n_components)])
 
     def _e_step(self, X):
-        n_samples, _ = X.shape
-        responsibilities = np.zeros((n_samples, self.n_components))
-        for k in range(self.n_components):
-            rv = multivariate_normal(self.means_[k], self.covariances_[k])
-            responsibilities[:, k] = self.weights_[k] * rv.pdf(X)
-        sum_responsibilities = responsibilities.sum(axis=1, keepdims=True)
-        responsibilities /= sum_responsibilities
-        return responsibilities
+        return e_step(X, self.weights_, self.means_, self.covariances_)
 
     def _m_step(self, X, responsibilities):
-        n_samples, n_features = X.shape
-        effective_n = responsibilities.sum(axis=0)
-        self.weights_ = effective_n / n_samples
-        self.means_ = np.dot(responsibilities.T, X) / effective_n[:, np.newaxis]
-        self.covariances_ = np.zeros((self.n_components, n_features, n_features))
+        m_step(X, responsibilities, self.weights_, self.means_, self.covariances_)
+
+        # force the covariance matrices to be diagonal plus low-rank
         for k in range(self.n_components):
-            diff = X - self.means_[k]
-            Sigma = np.dot(responsibilities[:, k] * diff.T, diff) / effective_n[k]
-            if self.rank is not None or self.rank == Sigma.shape[0]:
-                d, factored = fit_factor_model(Sigma, self.rank, **self.admm_args)
+            if self.rank is not None or self.rank == self.covariances_.shape[-1]:
+                d, factored = fit_factor_model(
+                    self.covariances_[k], self.rank, **self.admm_args
+                )
                 self.covariances_[k] = np.diag(d) + factored
-            else:
-                self.covariances_[k] = Sigma
 
     def fit(self, X):
         self._initialize_parameters(X)
-        log_likelihood = None
+        data_ll = None
         for _ in range(self.max_iter):
             responsibilities = self._e_step(X)
             self._m_step(X, responsibilities)
-            new_log_likelihood = np.sum(
-                np.log(
-                    np.sum(
-                        [
-                            self.weights_[k]
-                            * multivariate_normal(
-                                self.means_[k], self.covariances_[k]
-                            ).pdf(X)
-                            for k in range(self.n_components)
-                        ],
-                        axis=0,
-                    )
-                )
+            new_data_ll = gmm_log_likelihood(
+                X, self.weights_, self.means_, self.covariances_
             )
-            if (
-                log_likelihood is not None
-                and abs(new_log_likelihood - log_likelihood) < self.tol
-            ):
+            if data_ll is not None and abs(new_data_ll - data_ll) < self.tol:
                 break
-            log_likelihood = new_log_likelihood
+            data_ll = new_data_ll
 
     def predict_proba(self, X):
         return self._e_step(X)
 
     def predict(self, X):
-        responsibilities = self._e_step(X)
-        return np.argmax(responsibilities, axis=1)
+        return np.argmax(self.predict_proba(X), axis=1)
 
-    def score_samples(self, X):
-        return np.log(
-            np.sum(
-                [
-                    self.weights_[k]
-                    * multivariate_normal(self.means_[k], self.covariances_[k]).pdf(X)
-                    for k in range(self.n_components)
-                ],
-                axis=0,
-            )
-        )
+    def score(self, X):
+        return gmm_log_likelihood(X, self.weights_, self.means_, self.covariances_)

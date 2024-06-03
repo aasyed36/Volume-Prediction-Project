@@ -1,25 +1,23 @@
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 
 @njit
 def project_to_psd_cone(X, rank_k):
     """Project a symmetric matrix X to the cone of positive semidefinite matrices with rank at most k."""
     eigvals, eigvecs = np.linalg.eigh(X)
-    sorted_indices = np.argsort(eigvals)[::-1]  # Sort eigenvalues in descending order
+    sorted_indices = np.argsort(eigvals)[::-1]
     eigvals = eigvals[sorted_indices]
     eigvecs = eigvecs[:, sorted_indices]
-
-    # Keep only the top k eigenvalues
-    eigvals[rank_k:] = 0
+    eigvals[rank_k:] = 0.0
     return (eigvecs * eigvals).dot(eigvecs.T)
 
 
-@njit(parallel=True)
+@njit
 def x_update(Sigma, rho, Z, U, n):
     X = np.zeros((n, n))
-    for i in prange(n):
-        for j in prange(n):
+    for i in range(n):
+        for j in range(n):
             if i != j:
                 X[i, j] = (1 / (1 + rho)) * (Sigma[i, j] + rho * (Z[i, j] - U[i, j]))
             elif Sigma[i, i] - U[i, i] <= Z[i, i]:
@@ -39,7 +37,7 @@ def fit_factor_model(
     rtol=1e-3,
     mu=10,
     tau=2,
-    alpha=1.7,
+    alpha=1.6,
 ):
     """ADMM algorithm for factor model fitting."""
     n = Sigma.shape[0]
