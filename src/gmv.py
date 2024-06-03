@@ -35,7 +35,10 @@ class GaussianMixtureVolume:
 
     def __init__(self, **gmm_args):
         self.gmm_args = gmm_args
-        self.prior = GaussianMixture(**gmm_args)
+        if "rank" in gmm_args:
+            self.prior = GaussianFactorMixture(**gmm_args)
+        else:
+            self.prior = GaussianMixture(**gmm_args)
 
     @property
     def dim(self):

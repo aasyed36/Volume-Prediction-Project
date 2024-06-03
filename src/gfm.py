@@ -2,15 +2,27 @@ import numpy as np
 from scipy.stats import multivariate_normal
 from sklearn.cluster import KMeans
 
+from .fit_factor_model import fit_factor_model
+
 
 class GaussianFactorMixture:
     """TODO: Incorporate factor model fitting step"""
 
-    def __init__(self, n_components, max_iter=100, tol=1e-3, random_state=None):
+    def __init__(
+        self,
+        n_components,
+        rank=None,
+        max_iter=100,
+        tol=1e-3,
+        random_state=None,
+        admm_args=None,
+    ):
         self.n_components = n_components
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
+        self.rank = rank
+        self.admm_args = admm_args if admm_args is not None else {}
         self.weights_ = None
         self.means_ = None
         self.covariances_ = None
@@ -42,9 +54,12 @@ class GaussianFactorMixture:
         self.covariances_ = np.zeros((self.n_components, n_features, n_features))
         for k in range(self.n_components):
             diff = X - self.means_[k]
-            self.covariances_[k] = (
-                np.dot(responsibilities[:, k] * diff.T, diff) / effective_n[k]
-            )
+            Sigma = np.dot(responsibilities[:, k] * diff.T, diff) / effective_n[k]
+            if self.rank is not None or self.rank == Sigma.shape[0]:
+                d, factored = fit_factor_model(Sigma, self.rank, **self.admm_args)
+                self.covariances_[k] = np.diag(d) + factored
+            else:
+                self.covariances_[k] = Sigma
 
     def fit(self, X):
         self._initialize_parameters(X)
