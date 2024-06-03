@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit
 from sklearn.mixture import GaussianMixture
+from .gfm import GaussianFactorMixture
 
 
 @njit
