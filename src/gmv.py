@@ -54,7 +54,17 @@ class GaussianMixtureVolume:
 
     @property
     def covariances(self):
-        return self.prior.covariances_
+        cov = self.prior.covariances_
+        if cov.ndim == 2:
+            dim = cov.shape[1]
+            cov = np.concatenate(
+                [
+                    np.diag(cov[i]).reshape(1, dim, dim)
+                    for i in range(self.n_components)
+                ],
+                axis=0,
+            )
+        return cov
 
     @property
     def n_components(self):
