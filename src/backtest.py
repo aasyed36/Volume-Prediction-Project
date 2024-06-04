@@ -12,7 +12,7 @@ import cvxpy as cp
 import numpy as np
 import pandas as pd
 from loguru import logger
-from utils import data_path, synthetic_returns
+from .utils import data_path, synthetic_returns
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +44,7 @@ class OptimizationInput:
     cash: float
     risk_target: float
     risk_free: float
+    volume: pd.DataFrame
 
     @property
     def n_assets(self) -> int:
@@ -57,7 +58,7 @@ def run_backtest(strategy: Callable, risk_target: float, verbose: bool = False) 
     weights and then execute the trades at time t.
     """
 
-    prices, spread, rf, _ = load_data()
+    prices, spread, rf, volume = load_data()
     training_length = 1250
     prices, spread, rf = (
         prices.iloc[training_length:],
@@ -102,6 +103,7 @@ def run_backtest(strategy: Callable, risk_target: float, verbose: bool = False) 
 
         prices_t = prices.iloc[t - lookback : t + 1]  # Up to t
         spread_t = spread.iloc[t - lookback : t + 1]
+        volume_t = volume.iloc[t - lookback : t + 1]
 
         mean_t = means.loc[day]  # Forecast for return t to t+1
         covariance_t = covariances[day]  # Forecast for covariance t to t+1
@@ -118,6 +120,7 @@ def run_backtest(strategy: Callable, risk_target: float, verbose: bool = False) 
             cash,
             risk_target,
             rf.iloc[t],
+            volume_t,
         )
 
         w, _, problem = strategy(inputs_t)
