@@ -1,10 +1,9 @@
 import numpy as np
 from numba import njit
-from scipy.stats import multivariate_normal
 from sklearn.cluster import KMeans
 
 from .mvn import *
-from .fit_factor_model import fit_factor_model
+from .factor_model import fit_factor_model_frob, fit_factor_model_kl, factor_model_heuristic
 
 
 @njit
@@ -56,7 +55,6 @@ def m_step(X, responsibilities, weights, means, covariances):
 
 
 class GaussianFactorMixture:
-    """TODO: Incorporate factor model fitting step"""
 
     def __init__(
         self,
@@ -64,24 +62,26 @@ class GaussianFactorMixture:
         rank=None,
         max_iter=100,
         tol=1e-3,
-        random_state=None,
-        admm_args=None,
+        metric="kl",
     ):
         self.n_components = n_components
         self.max_iter = max_iter
         self.tol = tol
-        self.random_state = random_state
         self.rank = rank
-        self.admm_args = admm_args if admm_args is not None else {}
         self.weights_ = None
         self.means_ = None
         self.covariances_ = None
+        if metric == "kl":
+            self.factorizer = fit_factor_model_kl
+        elif metric == "frob":
+            self.factorizer = fit_factor_model_frob
+        elif metric == "heuristic":
+            self.factorizer = factor_model_heuristic
+        else:
+            raise ValueError("metric must be 'kl' or 'frob' or 'heuristic'")
 
     def _initialize_parameters(self, X):
-        np.random.seed(self.random_state)
-        kmeans = KMeans(
-            n_clusters=self.n_components, random_state=self.random_state
-        ).fit(X)
+        kmeans = KMeans(n_clusters=self.n_components).fit(X)
         self.means_ = kmeans.cluster_centers_
         self.weights_ = np.full(self.n_components, 1 / self.n_components)
         self.covariances_ = np.array([np.cov(X.T) for _ in range(self.n_components)])
@@ -95,10 +95,9 @@ class GaussianFactorMixture:
         # force the covariance matrices to be diagonal plus low-rank
         for k in range(self.n_components):
             if self.rank is not None or self.rank == self.covariances_.shape[-1]:
-                d, factored = fit_factor_model(
-                    self.covariances_[k], self.rank, **self.admm_args
-                )
-                self.covariances_[k] = np.diag(d) + factored
+                # TODO: improve the way the factor models are saved
+                d, F = self.factorizer(self.covariances_[k], self.rank)
+                self.covariances_[k] = np.diag(d) + F @ F.T
 
     def fit(self, X):
         self._initialize_parameters(X)
@@ -120,4 +119,4 @@ class GaussianFactorMixture:
         return np.argmax(self.predict_proba(X), axis=1)
 
     def score(self, X):
-        return gmm_log_likelihood(X, self.weights_, self.means_, self.covariances_)
+        return gmm_log_likelihood(X, self.weights_, self.means_, self.covariances_) / X.shape[0]

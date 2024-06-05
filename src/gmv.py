@@ -1,7 +1,5 @@
 import numpy as np
 from numba import njit
-from sklearn.mixture import GaussianMixture
-from .gfm import GaussianFactorMixture
 
 from .mvn import gaussian_cond_mean, gaussian_density
 
@@ -32,12 +30,14 @@ def predict_component(x, weights, means, covariances):
 class GaussianMixtureVolume:
     """Modeling trading volumes using Gaussian mixtures."""
 
-    def __init__(self, **gmm_args):
-        self.gmm_args = gmm_args
-        if "rank" in gmm_args:
-            self.prior = GaussianFactorMixture(**gmm_args)
-        else:
-            self.prior = GaussianMixture(**gmm_args)
+    def __init__(self, prior):
+        # prior needs to have the following attributes: 
+        # means_, covariances_, weights_, n_components
+        #
+        # for example, prior = GaussianMixture(n_components=2) # (scikit-learn)
+        # in that case, call prior.fit(X) to fit the model before passing it to
+        # this class constructor.
+        self.prior = prior
 
     @property
     def dim(self):
@@ -68,11 +68,6 @@ class GaussianMixtureVolume:
     @property
     def n_components(self):
         return self.prior.n_components
-
-    def fit(self, X):
-        """Fit the prior distribution of the intraday trading volumes, using
-        full days of data."""
-        self.prior.fit(X)
 
     def predict_point(self, x=None, mix_components=False):
         """Predict the rest of the vector, conditioned on the first few entries,
