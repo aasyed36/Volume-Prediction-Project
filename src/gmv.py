@@ -85,7 +85,7 @@ class GaussianMixtureVolume:
             k = predict_component(
                 x[:n], self.weights, self.means[:, :n], self.covariances[:, :n, :n]
             )
-            return self.means[k, n:]
+            return gaussian_cond_mean(self.means[k], self.covariances[k], x)
 
         # compute full conditional mean, mixing the components together
         else:
