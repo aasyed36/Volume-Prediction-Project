@@ -53,7 +53,7 @@ def _m_step(Cxx, Cxs, Css):
 
 
 @njit
-def fit_factor_model_kl(sigma, rank, n_iters=5):
+def fit_factor_model_kl(sigma, rank, n_iters=20):
     """
     param sigma: one covariance matrices
     param rank: float, rank of low rank component

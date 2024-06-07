@@ -11,15 +11,16 @@ class LinearRegressionVolume:
 
     def fit(self, X):
         """Fit the linear regression model."""
+        self.n_assets = X.shape[1] // self.dim
         for i in range(self.dim):
             if i == 0:
-                self.model[i].fit(np.zeros((X.shape[0], 1)), X[:, i:])
+                self.model[i].fit(np.zeros((X.shape[0], 1)), X[:, self.n_assets * i:])
             else:
-                self.model[i].fit(X[:, :i], X[:, i:])
+                self.model[i].fit(X[:, :self.n_assets * i], X[:, self.n_assets * i:])
 
     def predict(self, X=None):
         """Predict the trading volumes."""
         if X is None:
             return self.model[0].predict(np.zeros((1, 1)))
 
-        return self.model[X.shape[1]].predict(X)
+        return self.model[X.shape[1] // self.n_assets].predict(X)
