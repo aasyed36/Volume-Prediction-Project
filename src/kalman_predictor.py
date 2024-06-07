@@ -204,18 +204,20 @@ class KalmanPredictor:
         x_1 = self.x1()
         self.params = em(x_1, log_returns, self.params, maxsteps=maxsteps, tol=tol)
     
-    def predict_alike(self, y_observed):
+    def predict_alike(self, y_observed, x_t=None, start_time=0):
         C = self.C
+        if x_t is None:
+            x_t = self.x1()
+            
         # This will return a vector of y_hat that is the same size as y_observed
         # The assumption is we start at a hidden state x1 described by the distribution in self.params
         N = y_observed.size
         predictions = np.zeros_like(y_observed)
-        x_t = self.x1()
         y_t = y_observed[0]
         Sigma_t = self.params.Sigma
         predictions[0] = (C@x_t)[0] + self.params.phi[0]
         for i in range(1,N):
-            x_t, Sigma_t = kalman_filtering(i, x_t, y_t, Sigma_t, self.params)
+            x_t, Sigma_t = kalman_filtering(i+start_time, x_t, y_t, Sigma_t, self.params)
             predictions[i] = (C@x_t)[0] + self.params.phi[i%self.I]
         return predictions
     
