@@ -6,3 +6,4 @@ from .lrv import *
 from .markowitz import *
 from .backtest import *
 from .utils import *
+from .kalman_predictor import *
