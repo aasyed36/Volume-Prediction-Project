@@ -208,17 +208,16 @@ class KalmanPredictor:
         C = self.C
         if x_t is None:
             x_t = self.x1()
-            
+
         # This will return a vector of y_hat that is the same size as y_observed
         # The assumption is we start at a hidden state x1 described by the distribution in self.params
         N = y_observed.size
         predictions = np.zeros_like(y_observed)
-        y_t = y_observed[0]
         Sigma_t = self.params.Sigma
-        predictions[0] = (C@x_t)[0] + self.params.phi[0]
-        for i in range(1,N):
+        for i in range(N):
+            y_t = y_observed[i]
             x_t, Sigma_t = kalman_filtering(i+start_time, x_t, y_t, Sigma_t, self.params)
-            predictions[i] = (C@x_t)[0] + self.params.phi[i%self.I]
+            predictions[i] = (C@x_t)[0] + self.params.phi[(i+start_time)%self.I]
         return predictions
     
     # This function takes as input N independent days containing T steps where T < I.
