@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import multivariate_normal
 
 class Params:
-    def __init__(self, pi, Sigma, a_eta, a_mu, sigma_eta_sq, sigma_mu_sq, r, phi):
+    def __init__(self, pi, Sigma, a_eta, a_mu, sigma_eta_sq, sigma_mu_sq, r, phi, I=13):
         # pi and Sigma go into $x_t ~ \mathcal{N}(\pi_t, \Sigma_t)$
         self.pi = pi
         self.Sigma = Sigma
@@ -18,11 +18,12 @@ class Params:
         # phi is the seasonality parameter.
         # It's a vector in $\mathbb{R}^T$ where T is the number of intraday observations in a day
         self.phi = phi
+        self.I = I
         
     def A(self, tau):
         a1 = 1.0
         a2 = 1.0
-        if tau % 13 == 0: # tau = kT for some integer K, T is the # of observations in a day
+        if tau % self.I == 0: # tau = kT for some integer K, T is the # of observations in a day
             a1 = self.a_eta
             a2 = self.a_mu
         return np.array([[a1, 0.0], [0.0, a2]])
@@ -30,12 +31,12 @@ class Params:
     def Q(self, tau):
         a1 = 0.0
         a2 = 0.0
-        if tau % 13 == 0: # tau = kT for some integer K, T is the # of observations in a day
+        if tau % self.I == 0: # tau = kT for some integer K, T is the # of observations in a day
             a1 = self.sigma_eta_sq
             a2 = self.sigma_mu_sq
         return np.array([[a1, 0.0], [0.0, a2]])
 
-def kalman_filtering(tau, x_hat_tau, y_tau_plus, Sigma_tau_tau, params):
+def kalman_filtering(tau, x_hat_tau, y_tau_plus, Sigma_tau_tau, params, I=13):
     A = params.A(tau)
     C = np.ones((1,2))
     x_hat_tau_plus = A @ x_hat_tau # predict mean
@@ -45,13 +46,13 @@ def kalman_filtering(tau, x_hat_tau, y_tau_plus, Sigma_tau_tau, params):
     K_tau_plus = Sigma_tau_plus @ C.T @ np.linalg.inv(C @ Sigma_tau_plus @ C.T + params.r)
     
     # correct conditional mean
-    x_hat_next = x_hat_tau_plus + K_tau_plus @ (y_tau_plus - params.phi[tau%13] - C@x_hat_tau_plus)
+    x_hat_next = x_hat_tau_plus + K_tau_plus @ (y_tau_plus - params.phi[tau%I] - C@x_hat_tau_plus)
     Sigma_next = Sigma_tau_plus - K_tau_plus @ C @ Sigma_tau_plus
     #print("x_hat_next", x_hat_next.shape, "Sigma_next", Sigma_next.shape)
     return x_hat_next, Sigma_next
 
 
-def kalman_smoothing(x_t, ys, Sigma_t, params):
+def kalman_smoothing(x_t, ys, Sigma_t, params, I=13):
     # this uses the outputs from the filtering algorithm
     # NOTE THAT x_t is a shorthand in the next few lines for x_{t|t} and Sigma_t := Sigma_{t|t}
     N = ys.shape[0]
@@ -61,7 +62,7 @@ def kalman_smoothing(x_t, ys, Sigma_t, params):
     
     # this is an unsightly way to code it but I think it makes more sense
     for t in range(0, N):
-        x_t, Sigma_t = kalman_filtering(t, x_t, ys[t-1], Sigma_t, params)
+        x_t, Sigma_t = kalman_filtering(t, x_t, ys[t-1], Sigma_t, params, I=I)
         x_ts.append(x_t)
         Sigma_ts.append(Sigma_t)
         
@@ -118,12 +119,12 @@ def em(x_1, ys, params, maxsteps=10, tol=1e-1, I=13):
         
         for tau in range(N, 1, -1): # this is [N, N-1,...,2] because otherwise the indexing doesn't make sense for kalman smoothing
             # this line is x_{tau|N}, Sigma_{tau|N}, L_tau and x_ts = list of x_{tau|tau}, Sigma_ts = list of Sigma_{tau|tau}
-            x_tau_n, Sigma_tau_n, L_tau, x_ts, Sigma_ts = kalman_smoothing(x_1, ys[0:tau], params.Sigma, params)
+            x_tau_n, Sigma_tau_n, L_tau, x_ts, Sigma_ts = kalman_smoothing(x_1, ys[0:tau], params.Sigma, params, I=I)
             x_tau = x_tau_n # line 5
             P_tau = Sigma_tau_n + x_tau_n @ x_tau_n.T # line 6
             
             # this line gets x_{tau-1|N}, Sigma-{tau-1|N} and L_{tau-1}
-            x_tau_minus_n, Sigma_tau_minus_N, L_tau_minus, _, _ = kalman_smoothing(x_1, ys[0:tau-1], params.Sigma, params)
+            x_tau_minus_n, Sigma_tau_minus_N, L_tau_minus, _, _ = kalman_smoothing(x_1, ys[0:tau-1], params.Sigma, params, I=I)
             # This is line 7 of Algorithm 3 which computes Sigma_{tau, tau-1|N}
             # Note that Sigma_{tau, tau-1|N} has a dependency on Sigma_{tau+1, tau|N} which makes sense except
             # we do not know what to initialize it to
@@ -164,7 +165,7 @@ def em(x_1, ys, params, maxsteps=10, tol=1e-1, I=13):
         sigma_mu_sq *= 1.0/(N - 1.0)
         print("\tsigma_eta_sq = {}, sigma_mu_sq = {}".format(sigma_eta_sq, sigma_mu_sq))
         
-        phi = np.zeros(13)
+        phi = np.zeros(I)
         for i in range(N):
             phi[i%I] += ys[i] - (C@xs[i])[0,0]
         phi /= N_days
@@ -216,7 +217,7 @@ class KalmanPredictor:
         Sigma_t = self.params.Sigma
         for i in range(N):
             y_t = y_observed[i]
-            x_t, Sigma_t = kalman_filtering(i+start_time, x_t, y_t, Sigma_t, self.params)
+            x_t, Sigma_t = kalman_filtering(i+start_time, x_t, y_t, Sigma_t, self.params, I=self.I)
             predictions[i] = (C@x_t)[0] + self.params.phi[(i+start_time)%self.I]
         return predictions
     
@@ -234,10 +235,10 @@ class KalmanPredictor:
             # move through the T intraday steps
             for t in range(T):
                 y_t = y_observed[n,t]
-                x_t, Sigma_t = kalman_filtering(i, x_t, y_t, Sigma_t, self.params)
+                x_t, Sigma_t = kalman_filtering(t, x_t, y_t, Sigma_t, self.params, I=self.I)
             
             # make a multi-step prediction for the rest of the day
             for t in range(self.I-T):
-                x_t, Sigma_t = kalman_filtering(i, x_t, (C@x_t)[0], Sigma_t, self.params)
-                predictions[n,t] = (C@x_t)[0] + self.params.phi[i%self.I]
+                x_t, Sigma_t = kalman_filtering(t, x_t, (C@x_t)[0], Sigma_t, self.params, I=self.I)
+                predictions[n,t] = (C@x_t)[0] + self.params.phi[t%self.I]
         return predictions
